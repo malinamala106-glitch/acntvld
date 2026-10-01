@@ -1,0 +1,431 @@
+// Prisma schema for digital asset marketplace
+// Users (admin + buyer), products with bulk license keys, crypto wallets, deposits, orders
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  // Optional login handle chosen by the user (or set by an admin). Unique when
+  // present. Google-only signups start with no username and pick one during the
+  // one-time profile setup step.
+  username     String?  @unique
+  passwordHash String
+  name         String?
+  role         String   @default("BUYER") // ADMIN | BUYER | VENDOR
+  status       String   @default("ACTIVE") // ACTIVE | MUTED | BANNED | PENDING
+  // false until a Google signup finishes the one-time username + password step.
+  // Accounts created manually by an admin (or classic email/password signups)
+  // are considered complete from the start.
+  profileCompleted Boolean @default(false)
+  balance      Float    @default(0)
+  // Locked balance from active auction bids — not spendable, but not gone.
+  // admin can unlock (refund) per-auction via the dashboard.
+  lockedBalance Float   @default(0)
+  // Bumped to invalidate every session token already issued for this user.
+  // Session cookies are stateless, so without this a stolen cookie stays valid
+  // until it expires — even after a password change or a ban.
+  sessionVersion Int     @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  deposits     Deposit[]
+  orders       Order[]
+  bids         Bid[]
+  lockedEntries LockedBalance[]
+  conversations      Conversation[] @relation("ConversationUser")
+  assignedConversations Conversation[] @relation("ConversationAssignee")
+}
+
+model Product {
+  id              String   @id @default(cuid())
+  name            String
+  description     String?
+  renderHtml      Boolean  @default(false) // if true, description is HTML (rendered as formatted content on the product page)
+  category        String   @default("General")
+  metadata        String?  // JSON array of {name, value} pairs for custom product attributes
+  deliveryFormat  String?  // shown to buyer before purchase (e.g. "uid:email:pass")
+  price           Float
+  stock           Int      @default(0) // denormalized count of available keys
+  image           String?  // emoji or url
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  keys        LicenseKey[]
+  orders      Order[]
+  batches     Batch[]
+
+  @@index([isActive, createdAt])   // storefront listing: active products, newest first
+  @@index([category])              // storefront category filter
+}
+
+// Date-based pricing batches.
+// Each batch has its own date label (e.g. "10/05/25") and an optional
+// price override. When priceOverride is null, the parent product's price
+// is used. This lets admins stock the same product with different date
+// labels and prices (e.g. fresher accounts cost more).
+model Batch {
+  id            String   @id @default(cuid())
+  productId     String
+  label         String   // display label, typically MM/DD/YY
+  priceOverride Float?   // nullable — falls back to product.price
+  createdAt     DateTime @default(now())
+
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  keys          LicenseKey[]
+  orders        Order[]
+
+  @@index([productId, createdAt])
+}
+
+model LicenseKey {
+  id        String   @id @default(cuid())
+  productId String
+  batchId   String?  // nullable for backwards-compat with keys created before batches existed
+  key       String
+  status    String   @default("AVAILABLE") // AVAILABLE | SOLD | HOLD
+  orderId   String?
+  createdAt DateTime @default(now())
+
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  batch     Batch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  order     Order?   @relation(fields: [orderId], references: [id])
+
+  @@index([productId, status])
+  @@index([batchId, status])
+}
+
+model CryptoWallet {
+  id        String   @id @default(cuid())
+  network   String   // e.g. BTC, ETH, USDT-TRC20, USDT-ERC20, SOL
+  address   String
+  label     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  deposits  Deposit[]
+}
+
+model Deposit {
+  id         String   @id @default(cuid())
+  userId     String
+  walletId   String?
+  network    String
+  amount     Float
+  txHash     String?
+  note       String?
+  type       String   @default("CRYPTO") // CRYPTO | ADMIN_CREDIT | ADMIN_DEBIT
+  status     String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  adminNote  String?
+  createdAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet     CryptoWallet? @relation(fields: [walletId], references: [id])
+
+  @@index([userId, createdAt])     // per-user deposit history, newest first
+  @@index([status, createdAt])     // admin queue: pending deposits first
+}
+
+model Order {
+  id         String   @id @default(cuid())
+  shortId    Int      @unique // readable order number e.g. #1024, assigned in app layer
+  userId     String
+  productId  String
+  batchId    String?  // which batch the buyer purchased from (null = legacy order before batches)
+  quantity   Int      @default(1)
+  unitPrice  Float
+  totalAmount Float
+  status     String   @default("COMPLETED") // COMPLETED | FAILED | PENDING | REFUNDED | DISPUTED | CANCELLED
+  createdAt  DateTime @default(now())
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product    Product     @relation(fields: [productId], references: [id])
+  batch      Batch?      @relation(fields: [batchId], references: [id])
+  keys       LicenseKey[]
+
+  @@index([userId, createdAt])     // "my orders" list: per-user, newest first
+  @@index([createdAt])             // admin orders list + sales aggregates
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model Coupon {
+  id               String    @id @default(cuid())
+  code             String    @unique
+  description      String?
+  // Either percentage off (0-100) or fixed amount off (in USD). One of them must be > 0.
+  discountPercent  Float     @default(0) // e.g. 10 = 10% off
+  discountAmount   Float     @default(0) // e.g. 5 = $5 off
+  maxUses          Int       @default(0) // 0 = unlimited
+  usedCount        Int       @default(0)
+  expiresAt        DateTime?
+  isActive         Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([code, isActive])
+}
+
+model ChatMessage {
+  id         String   @id @default(cuid())
+  userId     String?  // null = anonymous guest (prefixed with guest_ for guests)
+  guestName  String?
+  message    String
+  isAdmin    Boolean  @default(false)
+  isRead     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([isAdmin, isRead])
+}
+
+// ----- Support Chat (conversation-based) -----
+// One row per support thread. A conversation belongs either to a registered
+// user (userId) or to an anonymous guest (guestSessionId). The legacy flat
+// ChatMessage table above is kept for historical data; new chat traffic uses
+// Conversation + SupportMessage.
+model Conversation {
+  id              String    @id @default(cuid())
+  userId          String?   // registered buyer; null for pure guests
+  guestSessionId  String?   // short guest session id (e.g. "4471"), null for registered
+  // Pre-chat topic picked by the buyer. 'other' covers everything else.
+  topic           String    @default("other") // order | purchase | deposit | product | other
+  // Lifecycle: processing = open/in-progress, complete = resolved,
+  // revoke = closed without resolution (archived; buyer starts a new one).
+  status          String    @default("processing") // processing | complete | revoke
+  assignedTo      String?   // admin User.id, null = unassigned
+  // Optional page context captured when the buyer opened the chat (e.g. the
+  // product/order page they were viewing). Purely informational for admins.
+  contextOrderId   String?
+  contextProductId String?
+  // JSON array of admin User.ids who pinned this conversation (per-admin, max 5 each, enforced app-side).
+  pinnedBy        String    @default("[]")
+  unreadByAdmin   Boolean   @default(false)
+  unreadByUser    Boolean   @default(false)
+  // Typing indicators — timestamps refreshed while each side types; a value
+  // older than a few seconds means typing stopped.
+  adminTypingAt   DateTime?
+  userTypingAt    DateTime?
+  // Guest metadata for abuse investigation. Never displayed to buyers.
+  guestIp         String?
+  guestUserAgent  String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  lastMessageAt   DateTime  @default(now())
+
+  user            User?     @relation("ConversationUser", fields: [userId], references: [id], onDelete: SetNull)
+  assignee        User?     @relation("ConversationAssignee", fields: [assignedTo], references: [id], onDelete: SetNull)
+  messages        SupportMessage[]
+  notes           MessageNote[]
+  rating          ConversationRating[]
+
+  @@index([userId])
+  @@index([guestSessionId])
+  @@index([status, lastMessageAt])
+  @@index([assignedTo])
+  @@index([lastMessageAt])
+}
+
+model SupportMessage {
+  id             String    @id @default(cuid())
+  conversationId String
+  senderId       String?   // null for system messages
+  senderType     String    // user | admin | system | guest
+  body           String
+  attachmentUrl  String?   // /uploads/chat/... — validated at upload time (JPG/PNG/PDF, ≤5MB)
+  // JSON: { name, size, mime } for an attachment, so the UI can render a
+  // file card (icon, size, download) without re-fetching the file.
+  attachmentMeta String?
+  createdAt      DateTime  @default(now())
+  deliveredAt    DateTime? // when the message reached the recipient's client
+  readAt         DateTime? // when the recipient viewed this message
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt]) // thread listing + lazy-load pagination
+  @@index([conversationId, createdAt, id])
+}
+
+// Admin-only internal notes on a conversation. Never sent to the buyer.
+model MessageNote {
+  id             String   @id @default(cuid())
+  conversationId String
+  adminId        String?  // null if the admin account was deleted
+  body           String
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
+// Admin quick replies. Shortcut includes the leading slash, e.g. "/refund_sent".
+model CannedResponse {
+  id        String   @id @default(cuid())
+  shortcut  String   @unique
+  body      String
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Buyer's 1-5 star rating of a completed support conversation.
+model ConversationRating {
+  id             String   @id @default(cuid())
+  conversationId String
+  buyerId        String?  // user id for registered buyers, null for guests
+  stars          Int
+  comment        String?
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId]) // one rating per conversation
+}
+
+// ----- Special Deals (auctions) -----
+
+model Auction {
+  id           String    @id @default(cuid())
+  title        String
+  slug         String    @unique
+  description  String?
+  // What kind of account/asset is being auctioned (e.g. "Netflix Premium 4K — 1 month")
+  category     String    @default("General")
+  // Admin-set starting (asking) price. Bids must be >= this.
+  askingPrice  Float
+  // Current highest bid — updated atomically on each bid.
+  currentBid   Float     @default(0)
+  currentBidderId String? // current highest bidder's user ID
+  // Optional image URL or emoji for display.
+  image        String?
+  // When the auction ends. Bids are rejected after this timestamp.
+  endsAt       DateTime
+  // Status: ACTIVE (accepting bids), ENDED (time up, winner determined), CANCELLED (admin cancelled, refunds issued)
+  status       String    @default("ACTIVE") // ACTIVE | ENDED | CANCELLED
+  // Delivery format shown to winner (e.g. "Email + password")
+  deliveryFormat String?
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  bids         Bid[]
+  lockedEntries LockedBalance[]
+}
+
+model Bid {
+  id         String   @id @default(cuid())
+  auctionId  String
+  userId     String
+  amount     Float
+  // Whether this bid's locked funds have been released (refunded) by admin or by auction end.
+  released   Boolean  @default(false)
+  // Cancel-request flow: user requests cancellation, admin approves/rejects.
+  // NONE = no cancel request, PENDING = user requested cancel (awaiting admin), APPROVED = admin approved (bid removed + funds refunded), REJECTED = admin rejected cancel (bid stays active)
+  cancelStatus String  @default("NONE") // NONE | PENDING | APPROVED | REJECTED
+  cancelRequestedAt DateTime?
+  cancelDecidedAt   DateTime?
+  cancelAdminNote   String?
+  createdAt  DateTime @default(now())
+
+  auction    Auction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([auctionId, amount])
+  @@index([userId])
+  @@index([cancelStatus])
+}
+
+// Funds locked for an active bid. One row per bid. When released, the funds return to the user's `balance`.
+model LockedBalance {
+  id         String   @id @default(cuid())
+  userId     String
+  auctionId  String
+  bidId      String   @unique
+  amount     Float
+  // LOCKED (held), RELEASED (refunded to balance), FORFEITED (kept by admin — winner pays)
+  status     String   @default("LOCKED") // LOCKED | RELEASED | FORFEITED
+  createdAt  DateTime @default(now())
+  releasedAt DateTime?
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  auction    Auction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([auctionId, status])
+}
+
+// ----- Blog -----
+
+model BlogPost {
+  id          String   @id @default(cuid())
+  title       String
+  slug        String   @unique
+  excerpt     String?
+  content     String   // markdown / plain text
+  coverImage  String?  // emoji or URL
+  tags        String?  // comma-separated
+  isPublished Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([slug])
+  @@index([isPublished, createdAt])
+}
+
+// Social links shown in the footer + top nav. Admin can add/edit/delete from the dashboard.
+model SocialLink {
+  id        String   @id @default(cuid())
+  platform  String   // telegram | facebook | instagram | reddit | email | twitter | discord | etc.
+  url       String   // full URL (or mailto: for email)
+  label     String?  // optional display label
+  order     Int      @default(0) // lower = first
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, order])
+}
+
+// Activity logs (audit trail). Stored in a separate table — never mixed with user data.
+// Immutable: entries can be archived (status=ARCHIVED) but never deleted.
+// Auto-archive after 90 days via /api/admin/activity-logs/archive endpoint (cron-style).
+model ActivityLog {
+  id          String   @id @default(cuid())
+  userId      String?  // null = anonymous / system action
+  // Snapshot of user info at the time of the event (so logs survive user deletion)
+  userEmail   String?
+  userLabel   String?  // email or "System" for automated actions
+  // Action categorization
+  actionType  String   // LOGIN | LOGOUT | LOGIN_FAILED | REGISTER | DEPOSIT | BID_PLACED | BID_CANCEL_REQUESTED | BID_CANCEL_APPROVED | BID_CANCEL_REJECTED | BID_WON | PURCHASE | REFUND | PROFILE_CHANGED | ADMIN_ACTION
+  action      String   // human-readable action label, e.g. "Deposited 50 USDT via BEP20"
+  description String   // longer description, includes amounts, networks, etc.
+  status      String   @default("SUCCESS") // SUCCESS | PENDING | FAILED | CANCELLED | ARCHIVED
+  referenceId String?  // e.g. TXN-9283746, BID-xxx, ORD-xxx, etc.
+  // Security / audit fields
+  ipAddress   String?  // full IP for admin view; masked version is computed on read for user view
+  userAgent   String?  // browser/OS for audit
+  metadata    String?  // JSON string for extra fields (e.g. amount, network, before/after values)
+  isArchived  Boolean  @default(false) // archived after 90 days, still queryable but hidden by default
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([actionType, createdAt])
+  @@index([createdAt])
+  @@index([status])
+  @@index([referenceId])
+}
+

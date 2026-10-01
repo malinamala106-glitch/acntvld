@@ -1,0 +1,38 @@
+import { db } from '@/lib/db'
+import { getCurrentUser } from '@/lib/auth'
+import { notFound, redirect } from 'next/navigation'
+import { CheckoutPage } from '@/components/public/CheckoutPage'
+import type { Metadata } from 'next'
+
+export const dynamic = 'force-dynamic'
+
+// Transactional page — keep it out of the index.
+export const metadata: Metadata = {
+  title: 'Checkout',
+  robots: { index: false, follow: false },
+}
+
+export default async function Page({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+  const [product, user] = await Promise.all([
+    db.product.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        category: true,
+        price: true,
+        stock: true,
+        image: true,
+        isActive: true,
+      },
+    }),
+    getCurrentUser(),
+  ])
+
+  if (!product || !product.isActive) notFound()
+  if (!user) redirect(`/?buy=${id}`)
+
+  return <CheckoutPage product={product} user={user} />
+}
