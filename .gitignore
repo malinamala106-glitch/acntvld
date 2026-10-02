@@ -64,6 +64,18 @@ prisma/*.db-journal
 .freebuff/
 .workbuddy-ai/
 
+# Security audit working files: raw PoC responses, test scripts, DB snapshot.
+# The written report (SECURITY_AUDIT.md) stays tracked; the working files do not.
+security-audit/
+
+# Credential handoff files — never commit anything that could carry a password
+credentials*.txt
+*.credentials.txt
+
+# Archived copies of this project. These embed .env and prisma/dev.db, so they
+# must never reach a public repository.
+*.zip
+
 # User-uploaded product images (keep the folder, not the files)
 public/uploads/*
 !public/uploads/.gitkeep

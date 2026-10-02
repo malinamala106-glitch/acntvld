@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { GOOGLE_STATE_COOKIE } from '@/lib/auth'
+import { serverSiteUrl } from '@/lib/site-url'
 
 // GET /api/auth/google
 // Redirects to Google OAuth consent screen.
@@ -14,7 +15,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL('/?signin=1&auth_error=google_not_configured', req.nextUrl.origin))
   }
 
-  const redirectUri = `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/auth/google/callback`
+  // Must be the real deployed origin: Google compares redirect_uri against the
+  // one registered in the console, and a localhost value sends every visitor
+  // who touches "Continue with Google" to their own machine.
+  const redirectUri = `${serverSiteUrl()}/api/auth/google/callback`
   const scope = 'openid email profile'
   // CSRF guard: a random value echoed back by Google and compared against a
   // short-lived cookie in the callback, so a forged callback can't sign a

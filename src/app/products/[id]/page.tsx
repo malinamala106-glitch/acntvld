@@ -1,9 +1,12 @@
 import { db } from '@/lib/db'
 import { notFound } from 'next/navigation'
 import { ProductDetailPage } from '@/components/public/ProductDetailPage'
+import { jsonLdHtml } from '@/lib/json-ld'
+import { toProductProps } from '@/lib/props'
+import { serverSiteUrl } from '@/lib/site-url'
 import type { Metadata } from 'next'
 
-const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://digitalvault.example'
+const baseUrl = serverSiteUrl()
 
 export const dynamic = 'force-dynamic'
 
@@ -59,8 +62,8 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
 
   return (
     <>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
-      <ProductDetailPage product={product} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdHtml(jsonLd) }} />
+      <ProductDetailPage product={toProductProps(product)} />
     </>
   )
 }

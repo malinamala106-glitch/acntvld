@@ -31,7 +31,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // Refund each entry — atomically
     const result = await db.$transaction(async (tx) => {
       let totalReleased = 0
+      let releasedCount = 0
       for (const entry of lockedEntries) {
+        // Claim the row inside the transaction before paying it out. Without
+        // this, two parallel "release funds" calls both read the same LOCKED
+        // rows (the findMany above is outside the transaction) and both refund
+        // — the same double-credit class as the deposit-approval race.
+        const claimed = await tx.lockedBalance.updateMany({
+          where: { id: entry.id, status: 'LOCKED' },
+          data: { status: 'RELEASED', releasedAt: new Date() },
+        })
+        if (claimed.count === 0) continue
         await tx.user.update({
           where: { id: entry.userId },
           data: {
@@ -39,17 +49,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             lockedBalance: { decrement: entry.amount },
           },
         })
-        await tx.lockedBalance.update({
-          where: { id: entry.id },
-          data: { status: 'RELEASED', releasedAt: new Date() },
-        })
         await tx.bid.updateMany({
           where: { id: entry.bidId },
           data: { released: true },
         })
         totalReleased += entry.amount
+        releasedCount += 1
       }
-      return { releasedCount: lockedEntries.length, totalReleased }
+      return { releasedCount, totalReleased }
     })
 
     return NextResponse.json({

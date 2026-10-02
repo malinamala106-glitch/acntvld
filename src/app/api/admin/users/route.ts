@@ -4,6 +4,7 @@ import { requireAdmin, hashPassword } from '@/lib/auth'
 import { signResetToken } from '@/lib/password'
 import { logActivity, getRequestIp, getRequestUserAgent, generateReferenceId } from '@/lib/activity-log'
 import { adminCreateUserSchema, parseWith } from '@/lib/validation'
+import { serverSiteUrl } from '@/lib/site-url'
 
 // Basic email format check — permissive but catches obvious mistakes.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -122,7 +123,7 @@ export async function POST(req: NextRequest) {
     let setupUrl: string | null = null
     if (sendWelcomeEmail) {
       const token = signResetToken(user.id, user.sessionVersion, SETUP_LINK_TTL_SECONDS)
-      const origin = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin
+      const origin = serverSiteUrl(req.nextUrl.origin)
       setupUrl = `${origin}/set-password?token=${encodeURIComponent(token)}`
     }
 

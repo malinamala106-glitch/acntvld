@@ -26,9 +26,19 @@ export async function POST(req: NextRequest) {
     const { email, password, name } = parsed.data
     const emailNorm = email.toLowerCase().trim()
 
+    // Do not confirm whether an address is already registered. A distinct
+    // error here turns this endpoint into an account-enumeration oracle (audit
+    // 2026-10-02, LOW-4): attackers use it to build a list of real customers
+    // for credential stuffing. Answer the way we answer a fresh signup and let
+    // the client point the visitor at the sign-in tab.
     const existing = await db.user.findUnique({ where: { email: emailNorm } })
     if (existing) {
-      return NextResponse.json({ error: 'Email already registered' }, { status: 400 })
+      return NextResponse.json({
+        ok: true,
+        accountCreated: false,
+        message:
+          'That address already has an account. Sign in with your password, or use “forgot password” if you have forgotten it.',
+      })
     }
     const user = await db.user.create({
       data: {
@@ -54,6 +64,8 @@ export async function POST(req: NextRequest) {
       metadata: { name: user.name || null },
     })
     return NextResponse.json({
+      ok: true,
+      accountCreated: true,
       user: { id: user.id, email: user.email, name: user.name, role: user.role, balance: user.balance },
     })
   } catch (e) {

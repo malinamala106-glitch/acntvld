@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { notFound } from 'next/navigation'
 import { ProductDetailPage } from '@/components/public/ProductDetailPage'
+import { toProductProps } from '@/lib/props'
 import type { Metadata } from 'next'
 
 export const dynamic = 'force-dynamic'
@@ -40,5 +41,5 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ i
     },
   })
   if (!product || !product.isActive) notFound()
-  return <ProductDetailPage product={product} />
+  return <ProductDetailPage product={toProductProps(product)} />
 }

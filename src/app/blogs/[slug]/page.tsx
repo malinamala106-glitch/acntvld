@@ -3,9 +3,11 @@ import { notFound } from 'next/navigation'
 import { BlogPostView } from '@/components/public/BlogList'
 import { buildContent, CONTENT_SETTING_KEYS } from '@/lib/site-content'
 import { getCachedContentSettings } from '@/lib/cache'
+import { jsonLdHtml } from '@/lib/json-ld'
+import { serverSiteUrl } from '@/lib/site-url'
 import type { Metadata } from 'next'
 
-const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://digitalvault.example'
+const baseUrl = serverSiteUrl()
 
 // ISR: article pages cached 5 min; admin edits invalidate the 'blogs' tag.
 export const revalidate = 300
@@ -50,7 +52,7 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
 
   return (
     <>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdHtml(jsonLd) }} />
       <BlogPostView
         post={post as any}
         content={buildContent(settingsRows)}

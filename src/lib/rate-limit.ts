@@ -86,14 +86,42 @@ export function rateLimit({ scope, identifier, limit, windowMs }: RateLimitOptio
   }
 }
 
-/** Convenience: read a client IP from proxy headers, with a safe fallback. */
+/**
+ * Identify the caller for rate-limit buckets.
+ *
+ * `X-Forwarded-For` is client-*appendable*: anyone can send
+ * `X-Forwarded-For: 1.2.3.4`, and until this fix every "per-IP" bucket on the
+ * site keyed off that value — so the signup, login, password-reset and upload
+ * limits could be walked straight past by rotating the header. Verified in the
+ * 2026-10-02 audit: five signups returned 429, then two more with a fresh XFF
+ * returned 200, and 12 login attempts with distinct XFFs never tripped the
+ * per-IP limiter.
+ *
+ * What is trusted now, in order:
+ *   1. Headers a reverse proxy / platform *overwrites* (rather than appends):
+ *      Cloudflare `cf-connecting-ip`, Fly.io `fly-client-ip`, Vercel/most proxies
+ *      `x-real-ip`. Plain `x-forwarded-for` is deliberately ignored.
+ *   2. The socket's own remote address, where the runtime exposes it.
+ *   3. `unknown` — one shared bucket. That errs strict, never loose.
+ *
+ * Deployment note: whatever fronts this app must overwrite the headers above.
+ * With no proxy, every visitor shares the `unknown` bucket and legit traffic
+ * gets throttled — so put a proxy/CDN in front, and keep the per-identity limits
+ * (per email on login, per user id elsewhere) as the primary control.
+ */
 export function clientIp(req: Request, fallback = 'unknown'): string {
-  const xff = req.headers.get('x-forwarded-for')
-  if (xff) {
-    const first = xff.split(',')[0].trim()
+  const trusted =
+    req.headers.get('cf-connecting-ip') ??
+    req.headers.get('fly-client-ip') ??
+    req.headers.get('x-real-ip') ??
+    req.headers.get('x-vercel-forwarded-for')
+  if (trusted) {
+    const first = trusted.split(',')[0]?.trim()
     if (first) return first
   }
-  return req.headers.get('x-real-ip')?.trim() || fallback
+  const socket = (req as unknown as { socket?: { remoteAddress?: string } }).socket
+  if (socket?.remoteAddress) return socket.remoteAddress
+  return fallback
 }
 
 /** Standard 429 response with a Retry-After header. */

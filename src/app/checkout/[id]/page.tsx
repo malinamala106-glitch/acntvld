@@ -2,6 +2,7 @@ import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { notFound, redirect } from 'next/navigation'
 import { CheckoutPage } from '@/components/public/CheckoutPage'
+import { toProductProps, toUserProps } from '@/lib/props'
 import type { Metadata } from 'next'
 
 export const dynamic = 'force-dynamic'
@@ -34,5 +35,5 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   if (!product || !product.isActive) notFound()
   if (!user) redirect(`/?buy=${id}`)
 
-  return <CheckoutPage product={product} user={user} />
+  return <CheckoutPage product={toProductProps(product)} user={toUserProps(user)} />
 }

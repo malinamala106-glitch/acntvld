@@ -4,6 +4,7 @@ import { cookies } from 'next/headers'
 import { db } from '@/lib/db'
 import { createSession, hashPassword, GOOGLE_STATE_COOKIE } from '@/lib/auth'
 import { logActivity, getRequestIp, getRequestUserAgent, generateReferenceId } from '@/lib/activity-log'
+import { serverSiteUrl } from '@/lib/site-url'
 
 // GET /api/auth/google/callback
 //
@@ -34,7 +35,9 @@ export async function GET(req: NextRequest) {
     return fail('google_state')
   }
 
-  const redirectUri = `${process.env.NEXT_PUBLIC_SITE_URL || origin}/api/auth/google/callback`
+  // `origin` (the host the callback actually arrived on) is the safest fallback
+  // — it is always the deployment the user is really using.
+  const redirectUri = `${serverSiteUrl(origin)}/api/auth/google/callback`
 
   try {
     // 1) Exchange the code for an access token.

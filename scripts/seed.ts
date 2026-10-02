@@ -3,13 +3,45 @@
 import { db } from '../src/lib/db'
 import { hashPassword } from '../src/lib/password'
 
+/**
+ * Resolve a password for a seeded account.
+ *
+ * There is deliberately no default password in this file any more. A password
+ * hard-coded here lives in git, in every environment that runs the seeder, and
+ * (until 2026-10-02) was printed on the public login screen — anyone who
+ * visited the site could sign in as admin. Supply one through the environment,
+ * or let the seeder mint a random one and print it exactly once.
+ */
+function seedPassword(envVar: string, label: string): string {
+  const fromEnv = process.env[envVar]?.trim()
+  if (fromEnv) {
+    if (fromEnv.length < 8) {
+      throw new Error(`${envVar} is too short (minimum 8 characters).`)
+    }
+    return fromEnv
+  }
+  const generated = crypto.randomUUID().replace(/-/g, '').slice(0, 20)
+  console.log(
+    `\n  ${envVar} is not set — generated a random password for the ${label}:\n` +
+      `     ${generated}\n` +
+      `     Save it now in your password manager. It is not stored anywhere else.\n`,
+  )
+  return generated
+}
+
 async function main() {
+  // Seeding writes an admin account. Never do that against a production
+  // database, whatever the rest of the environment looks like.
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Refusing to seed while NODE_ENV=production.')
+  }
+
   const adminEmail = 'admin@asset.shop'
-  const adminPass = 'admin123'
 
   // 1. Admin user
   let admin = await db.user.findUnique({ where: { email: adminEmail } })
   if (!admin) {
+    const adminPass = seedPassword('ADMIN_SEED_PASSWORD', 'admin account')
     admin = await db.user.create({
       data: {
         email: adminEmail,
@@ -19,7 +51,7 @@ async function main() {
         balance: 0,
       },
     })
-    console.log(`Admin created: ${adminEmail} / ${adminPass}`)
+    console.log(`Admin created: ${adminEmail}`)
   } else {
     if (admin.role !== 'ADMIN') {
       admin = await db.user.update({ where: { id: admin.id }, data: { role: 'ADMIN' } })
@@ -30,16 +62,17 @@ async function main() {
   // 2. Demo buyer
   let buyer = await db.user.findUnique({ where: { email: 'demo@buyer.shop' } })
   if (!buyer) {
+    const buyerPass = seedPassword('BUYER_SEED_PASSWORD', 'demo buyer account')
     buyer = await db.user.create({
       data: {
         email: 'demo@buyer.shop',
-        passwordHash: hashPassword('demo123'),
+        passwordHash: hashPassword(buyerPass),
         name: 'Demo Buyer',
         role: 'BUYER',
         balance: 100,
       },
     })
-    console.log('Demo buyer created: demo@buyer.shop / demo123 (balance 100)')
+    console.log('Demo buyer created: demo@buyer.shop (balance 100)')
   } else {
     console.log('Demo buyer exists')
   }
@@ -550,8 +583,12 @@ Happy bidding!`,
   }
 
   console.log('\nSeed complete.')
-  console.log('Admin login: admin@asset.shop / admin123')
-  console.log('Buyer login: demo@buyer.shop / demo123 (balance 100)')
+  console.log(`Admin login: ${adminEmail}`)
+  console.log('Buyer login: demo@buyer.shop')
+  console.log(
+    'Passwords are never printed here: they come from ADMIN_SEED_PASSWORD /\n' +
+      'BUYER_SEED_PASSWORD, or from the random values printed once at creation.',
+  )
 }
 
 main()

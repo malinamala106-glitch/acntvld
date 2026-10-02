@@ -1,6 +1,7 @@
 // https://nextjs.org/docs/app/api-reference/file-conventions/metadata/sitemap
 import type { MetadataRoute } from 'next'
 import { db } from '@/lib/db'
+import { serverSiteUrl } from '@/lib/site-url'
 
 export const dynamic = 'force-dynamic'
 // Rebuild at most once an hour — keeps product/auction/post freshness without
@@ -8,7 +9,7 @@ export const dynamic = 'force-dynamic'
 export const revalidate = 3600
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://digitalvault.example'
+  const baseUrl = serverSiteUrl()
   const lastModified = new Date()
 
   // Static, indexable pages. Transactional pages (checkout, deposit) and the

@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
 import { ChatWidgetLazy } from '@/components/shared/ChatWidgetLazy'
 import { TrackingScripts } from '@/components/TrackingScripts'
+import { jsonLdHtml } from '@/lib/json-ld'
+import { serverSiteUrl } from '@/lib/site-url'
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -16,7 +18,7 @@ const geistMono = Geist_Mono({
   display: 'swap',
 })
 
-const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://digitalvault.example'
+const baseUrl = serverSiteUrl()
 const siteName = 'DigitalVault'
 const title = 'DigitalVault — License Key & Digital Asset Marketplace'
 const description =
@@ -170,11 +172,11 @@ export default function RootLayout({
         <ChatWidgetLazy />
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+          dangerouslySetInnerHTML={{ __html: jsonLdHtml(jsonLd) }}
         />
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(orgLd) }}
+          dangerouslySetInnerHTML={{ __html: jsonLdHtml(orgLd) }}
         />
       </body>
     </html>

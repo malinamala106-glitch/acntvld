@@ -106,8 +106,15 @@ export async function POST(req: NextRequest) {
     await requireAdmin()
     const body = await req.json()
     const { name, description, renderHtml, category, metadata, deliveryFormat, price, image, keys } = body || {}
-    if (!name || typeof price !== 'number' || price < 0) {
-      return NextResponse.json({ error: 'Name and price are required' }, { status: 400 })
+    // Name is bounded server-side on purpose: it is echoed into the product
+    // page's JSON-LD (see lib/json-ld.ts) and into <title>/meta tags, so an
+    // unbounded value is both a storage and a rendering-footgun.
+    const nameClean = typeof name === 'string' ? name.trim() : ''
+    if (!nameClean || nameClean.length > 200) {
+      return NextResponse.json({ error: 'Name is required and must be at most 200 characters' }, { status: 400 })
+    }
+    if (typeof price !== 'number' || !Number.isFinite(price) || price < 0) {
+      return NextResponse.json({ error: 'Price must be a number of zero or more' }, { status: 400 })
     }
 
     const keyList: string[] = Array.isArray(keys)
@@ -134,8 +141,8 @@ export async function POST(req: NextRequest) {
 
     const product = await db.product.create({
       data: {
-        name: String(name),
-        description: description || null,
+        name: nameClean,
+        description: typeof description === 'string' ? description.slice(0, 20000) : null,
         renderHtml: typeof renderHtml === 'boolean' ? renderHtml : false,
         category: category || 'General',
         metadata: metadataStr,

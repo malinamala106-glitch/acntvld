@@ -4,6 +4,7 @@ import { AppShell } from '@/components/AppShell'
 import type { Product, PublicSettings } from '@/lib/types'
 import { buildContent, CONTENT_SETTING_KEYS } from '@/lib/site-content'
 import { getCachedActiveProducts, getCachedContentSettings } from '@/lib/cache'
+import { toUserProps } from '@/lib/props'
 import type { Metadata } from 'next'
 
 // Server component — renders the right shell based on auth cookie.
@@ -40,7 +41,7 @@ export default async function Home() {
   ])
   return (
     <AppShell
-      initialUser={user}
+      initialUser={user ? toUserProps(user) : null}
       initialProducts={productsResult as unknown as Product[]}
       initialSettings={buildSettings(settingsRows)}
     />

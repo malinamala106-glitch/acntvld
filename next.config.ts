@@ -17,9 +17,6 @@ const nextConfig: NextConfig = {
   // doesn't resolve reliably in dev. Treat it as a stable server external so
   // it's always loaded by Node's resolver instead of the bundler.
   serverExternalPackages: ["@prisma/client", ".prisma/client"],
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   reactStrictMode: true,
 
   // --- Production output tuning -------------------------------------------
@@ -88,6 +85,20 @@ const nextConfig: NextConfig = {
           {
             key: "Cache-Control",
             value: isProd ? "public, max-age=2592000" : "no-store, must-revalidate",
+          },
+          // Uploaded files are served straight off disk, outside the proxy (see
+          // the matcher in src/proxy.ts), so they used to arrive with no
+          // X-Content-Type-Options at all. The upload routes already verify
+          // magic bytes and sanitise SVG, but a stray HTML-looking file should
+          // never be sniffed into something executable, and an SVG should not
+          // be able to run script if it ever slips past DOMPurify.
+          {
+            key: "X-Content-Type-Options",
+            value: "nosniff",
+          },
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox",
           },
         ],
       },

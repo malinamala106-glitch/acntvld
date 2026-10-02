@@ -1,12 +1,14 @@
 import { BlogList } from '@/components/public/BlogList'
 import { buildContent, CONTENT_SETTING_KEYS } from '@/lib/site-content'
 import { getCachedBlogPosts, getCachedContentSettings } from '@/lib/cache'
+import { jsonLdHtml } from '@/lib/json-ld'
+import { serverSiteUrl } from '@/lib/site-url'
 import type { Metadata } from 'next'
 
 // ISR: post list cached 5 min; admin writes invalidate the 'blogs' tag instantly.
 export const revalidate = 300
 
-const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://digitalvault.example'
+const baseUrl = serverSiteUrl()
 
 export const metadata: Metadata = {
   title: 'Blog — Buying Guides, Crypto Help & Weekly Deals',
@@ -41,7 +43,7 @@ export default async function Page() {
 
   return (
     <>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdHtml(jsonLd) }} />
       <BlogList
         posts={posts as any}
         content={buildContent(settingsRows)}

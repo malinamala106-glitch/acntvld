@@ -1,4 +1,108 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import { clientIp, rateLimit } from '@/lib/rate-limit'
+import { configuredSiteUrl } from '@/lib/site-url'
+
+// ---------------------------------------------------------------------------
+// Request guards that have to run before a route handler (audit 2026-10-02)
+// ---------------------------------------------------------------------------
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+/**
+ * Body cap for JSON APIs, in bytes.
+ *
+ * Every JSON endpoint in this app takes kilobytes: a license-key paste, a chat
+ * message (capped at 2000 chars), a blog post. Before this cap an anonymous
+ * caller could make the server buffer and JSON.parse a ~9MB body per request
+ * (measured), which the runtime only stopped at ~10MB — too high to be a
+ * product decision. Multipart upload routes are exempt because they legitimately
+ * carry up to 5MB (chat) / 2MB (product image) and validate their own size.
+ */
+const JSON_BODY_LIMIT_BYTES = 256 * 1024
+const UPLOAD_ROUTES = new Set(['/api/chat/upload', '/api/admin/products/upload'])
+
+/**
+ * Requests per minute per caller across the whole API.
+ *
+ * The audit found 1000/1000 requests to /api/products served with no limit at
+ * all. This is a blunt backstop; the per-route limiters in lib/rate-limit.ts
+ * remain the fine-grained control. Off in development so local testing and
+ * test suites aren't throttled — set API_RATE_LIMIT_PER_MIN to change or enable
+ * it. A high ceiling is deliberate: the point is to stop floods, not to get in
+ * the way of the chat widget's 1s polling.
+ */
+function apiRateLimit(req: NextRequest): NextResponse | null {
+  const configured = Number(process.env.API_RATE_LIMIT_PER_MIN ?? '')
+  const limit = Number.isFinite(configured) && configured > 0
+    ? configured
+    : process.env.NODE_ENV === 'production'
+      ? 300
+      : 0
+  if (limit === 0) return null
+
+  const result = rateLimit({
+    scope: 'api:global',
+    identifier: clientIp(req),
+    limit,
+    windowMs: 60 * 1000,
+  })
+  if (result.ok) return null
+  return NextResponse.json(
+    { error: 'Too many requests. Please slow down and try again shortly.' },
+    { status: 429, headers: { 'Retry-After': String(result.retryAfterSeconds) } },
+  )
+}
+
+/**
+ * CSRF guard for state-changing API calls.
+ *
+ * The session cookie is `SameSite=Lax`, which already stops a cross-site
+ * *form post* from carrying credentials — that is the real protection and it
+ * stays. This is the second line: if a browser does send an `Origin` (or a
+ * cross-site `Sec-Fetch-Site`) for a mutating request, refuse it instead of
+ * trusting the cookie's attributes alone.
+ *
+ * Deliberately self-configuring: it compares against the *request's own*
+ * origin, not an env var, so it cannot break a deployment whose host name
+ * differs from NEXT_PUBLIC_SITE_URL. Requests with no `Origin` (server-to-server
+ * clients, curl, native apps) are allowed — they are not browser-driven and
+ * therefore not subject to CSRF.
+ */
+function csrfGuard(req: NextRequest): NextResponse | null {
+  if (SAFE_METHODS.has(req.method)) return null
+
+  const site = req.headers.get('sec-fetch-site')
+  if (site && site !== 'same-origin' && site !== 'none') {
+    return NextResponse.json({ error: 'Cross-site request blocked' }, { status: 403 })
+  }
+
+  const origin = req.headers.get('origin')
+  if (!origin || origin === 'null') return null
+  let originUrl: URL | null = null
+  try {
+    originUrl = new URL(origin)
+  } catch {
+    return NextResponse.json({ error: 'Cross-site request blocked' }, { status: 403 })
+  }
+  if (originUrl.origin !== req.nextUrl.origin) {
+    return NextResponse.json({ error: 'Cross-site request blocked' }, { status: 403 })
+  }
+  return null
+}
+
+/** Oversized JSON body guard. */
+function bodyGuard(req: NextRequest): NextResponse | null {
+  if (SAFE_METHODS.has(req.method)) return null
+  const { pathname } = req.nextUrl
+  if (!pathname.startsWith('/api/') || UPLOAD_ROUTES.has(pathname)) return null
+
+  const length = Number(req.headers.get('content-length') ?? '0')
+  if (Number.isFinite(length) && length > JSON_BODY_LIMIT_BYTES) {
+    return NextResponse.json({ error: 'Request body too large' }, { status: 413 })
+  }
+  return null
+}
+
 
 /**
  * Security headers + HTTPS enforcement + host canonicalisation.
@@ -66,22 +170,25 @@ export function proxy(req: NextRequest) {
 
   // --- Canonical host + HTTPS ---------------------------------------------
   if (!isDev) {
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL
-    if (siteUrl) {
-      let canonicalOrigin: string | null = null
-      try {
-        canonicalOrigin = new URL(siteUrl).origin
-      } catch {
-        // Invalid env value — don't break the site over a config typo.
-        canonicalOrigin = null
-      }
-      if (canonicalOrigin && req.nextUrl.origin !== canonicalOrigin) {
+    // configuredSiteUrl() returns null when nothing is configured. That matters
+    // here: falling back to http://localhost:3000 would make this branch 308
+    // every real visitor off the deployed domain onto their own machine.
+    const configured = configuredSiteUrl()
+    if (configured) {
+      const canonicalOrigin = configured
+      if (req.nextUrl.origin !== canonicalOrigin) {
         return applySecurityHeaders(
           NextResponse.redirect(new URL(req.nextUrl.pathname + req.nextUrl.search, canonicalOrigin), 308),
           isDev
         )
       }
     }
+  }
+
+  // --- Pre-handler guards (API routes only) --------------------------------
+  if (req.nextUrl.pathname.startsWith('/api/')) {
+    const blocked = bodyGuard(req) ?? csrfGuard(req) ?? apiRateLimit(req)
+    if (blocked) return applySecurityHeaders(blocked, isDev)
   }
 
   return applySecurityHeaders(NextResponse.next(), isDev)

@@ -65,14 +65,29 @@ export const api = {
     await json(res)
   },
 
-  async register(email: string, password: string, name?: string): Promise<User> {
+  /**
+   * Create an account.
+   *
+   * The route deliberately answers identically whether or not the address was
+   * already registered (it must not confirm that — see LOW-4 in the audit), so
+   * the ambiguous case comes back as `user: null` plus a neutral `notice` the
+   * caller can show. Only genuine validation failures throw.
+   */
+  async register(
+    email: string,
+    password: string,
+    name?: string
+  ): Promise<{ user: User | null; notice?: string }> {
     const res = await fetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, name }),
     })
-    const data = await json<{ user: User }>(res)
-    return data.user
+    const data = await json<{ user?: User; accountCreated?: boolean; message?: string }>(res)
+    return {
+      user: data.user ?? null,
+      notice: data.accountCreated === false ? data.message : undefined,
+    }
   },
 
   async logout(): Promise<void> {
@@ -107,7 +122,15 @@ export const api = {
     return data.product
   },
 
-  async updateProduct(id: string, payload: Partial<Product>): Promise<Product> {
+  // `metadata` accepts either the JSON string the text editor keeps or the
+  // structured rows the visual editor produces — the route validates both and
+  // normalises to the stored JSON string.
+  async updateProduct(
+    id: string,
+    payload: Partial<Omit<Product, 'metadata'>> & {
+      metadata?: string | Array<{ name: string; value: string }>
+    }
+  ): Promise<Product> {
     const res = await fetch(`/api/products/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },

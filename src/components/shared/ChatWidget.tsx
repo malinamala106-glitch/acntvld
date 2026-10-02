@@ -57,12 +57,19 @@ const TOPICS = [
 // Generate or get a guest session id — only used when the visitor is NOT
 // authenticated. Persisted in localStorage so a guest keeps their thread
 // across tabs and visits. 8-32 alphanumeric chars — the exact server format.
+//
+// The id is a bearer credential: whoever holds it can read that guest's support
+// thread and claim it via /api/chat/merge. It is therefore generated with the
+// Web Crypto CSPRNG (16 bytes = 128 bits) rather than Math.random, which is a
+// non-cryptographic PRNG and whose output can be reconstructed from a few
+// observed values.
 function getGuestSession(): string {
   if (typeof window === 'undefined') return ''
   let s = localStorage.getItem('support_guest_session')
   if (!s || !/^[a-zA-Z0-9]{8,32}$/.test(s)) {
-    s = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)
-    s = s.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)
+    const bytes = new Uint8Array(16)
+    crypto.getRandomValues(bytes)
+    s = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
     localStorage.setItem('support_guest_session', s)
   }
   return s

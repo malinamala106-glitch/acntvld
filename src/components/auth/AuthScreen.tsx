@@ -23,32 +23,34 @@ interface Props {
 export function AuthScreen({ onLogin }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
 
   async function submit(mode: 'login' | 'register') {
     setError('')
+    setNotice('')
     setLoading(true)
     try {
-      const user = mode === 'login'
-        ? await api.login(email, password)
-        : await api.register(email, password, name)
-      onLogin(user)
+      if (mode === 'login') {
+        onLogin(await api.login(email, password))
+        return
+      }
+      // The register route answers the same way whether or not the address was
+      // already taken — it must not confirm that, or the form becomes an
+      // account-enumeration oracle. So the ambiguous case surfaces here as a
+      // neutral notice rather than an error.
+      const { user, notice: alreadyKnown } = await api.register(email, password, name)
+      if (user) {
+        onLogin(user)
+      } else {
+        setNotice(alreadyKnown || 'Check your inbox to confirm the account, then sign in.')
+      }
     } catch (e: any) {
       setError(e.message || 'Something went wrong')
     } finally {
       setLoading(false)
-    }
-  }
-
-  function fillDemo(kind: 'admin' | 'buyer') {
-    if (kind === 'admin') {
-      setEmail('admin@asset.shop')
-      setPassword('admin123')
-    } else {
-      setEmail('demo@buyer.shop')
-      setPassword('demo123')
     }
   }
 
@@ -137,14 +139,6 @@ export function AuthScreen({ onLogin }: Props) {
                       {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Sign in'}
                     </Button>
                   </form>
-                  <div className="flex gap-2 mt-4">
-                    <Button variant="outline" size="sm" className="flex-1" onClick={() => fillDemo('admin')}>
-                      Try Admin
-                    </Button>
-                    <Button variant="outline" size="sm" className="flex-1" onClick={() => fillDemo('buyer')}>
-                      Try Buyer
-                    </Button>
-                  </div>
                 </TabsContent>
 
                 <TabsContent value="register">
@@ -190,18 +184,13 @@ export function AuthScreen({ onLogin }: Props) {
                       />
                     </div>
                     {error && <p className="text-sm text-red-500">{error}</p>}
+                    {notice && <p className="text-sm text-amber-600 dark:text-amber-400">{notice}</p>}
                     <Button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white" disabled={loading}>
                       {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create account'}
                     </Button>
                   </form>
                 </TabsContent>
               </Tabs>
-
-              <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500">
-                <p className="font-medium text-zinc-700 dark:text-zinc-300 mb-1">Demo accounts</p>
-                <p>Admin: admin@asset.shop / admin123</p>
-                <p>Buyer: demo@buyer.shop / demo123 (balance $100)</p>
-              </div>
             </CardContent>
           </Card>
         </div>

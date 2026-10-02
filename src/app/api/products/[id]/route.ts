@@ -10,13 +10,24 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const { id } = await params
     const body = await req.json()
     const data: any = {}
-    if (typeof body.name === 'string') data.name = body.name
-    if (typeof body.description === 'string') data.description = body.description
+    if (typeof body.name === 'string') {
+      const name = body.name.trim()
+      if (!name || name.length > 200) {
+        return NextResponse.json({ error: 'Name must be 1-200 characters' }, { status: 400 })
+      }
+      data.name = name
+    }
+    if (typeof body.description === 'string') data.description = body.description.slice(0, 20000)
     if (typeof body.renderHtml === 'boolean') data.renderHtml = body.renderHtml
-    if (typeof body.category === 'string') data.category = body.category
+    if (typeof body.category === 'string') data.category = body.category.slice(0, 80)
     if (typeof body.deliveryFormat === 'string') data.deliveryFormat = body.deliveryFormat.trim().slice(0, 200) || null
-    if (typeof body.price === 'number') data.price = body.price
-    if (typeof body.image === 'string') data.image = body.image
+    if (typeof body.price === 'number') {
+      if (!Number.isFinite(body.price) || body.price < 0) {
+        return NextResponse.json({ error: 'Price must be a number of zero or more' }, { status: 400 })
+      }
+      data.price = body.price
+    }
+    if (typeof body.image === 'string') data.image = body.image.slice(0, 500)
     if (typeof body.isActive === 'boolean') data.isActive = body.isActive
     // Handle metadata — accept a JSON array string or a JS array, validate it
     if (body.metadata !== undefined) {

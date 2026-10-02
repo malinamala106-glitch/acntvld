@@ -33,6 +33,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (action === 'approve') {
       // Refund locked funds + mark bid as approved-cancelled
       const result = await db.$transaction(async (tx) => {
+        // Claim the bid inside the transaction before refunding anything. The
+        // `cancelStatus !== 'PENDING'` read above happens outside the
+        // transaction, so without this two parallel approvals would both pass
+        // it and refund the same locked funds twice.
+        const claimed = await tx.bid.updateMany({
+          where: { id, cancelStatus: 'PENDING' },
+          data: {
+            cancelStatus: 'APPROVED',
+            cancelDecidedAt: new Date(),
+            cancelAdminNote: adminNote ? String(adminNote).slice(0, 500) : null,
+            released: true,
+          },
+        })
+        if (claimed.count === 0) throw new Error('BID_ALREADY_DECIDED')
+
         // Refund the user's locked balance back to free balance
         await tx.user.update({
           where: { id: bid.userId },
@@ -42,16 +57,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           },
         })
 
-        // Mark the bid as APPROVED (cancelled) + released
-        const updatedBid = await tx.bid.update({
-          where: { id },
-          data: {
-            cancelStatus: 'APPROVED',
-            cancelDecidedAt: new Date(),
-            cancelAdminNote: adminNote ? String(adminNote).slice(0, 500) : null,
-            released: true,
-          },
-        })
+        const updatedBid = await tx.bid.findUnique({ where: { id } })
 
         // Release the LockedBalance entry
         await tx.lockedBalance.updateMany({
@@ -115,15 +121,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         message: 'Cancellation approved. Locked funds refunded to the user. The user can now place a new bid on this deal.',
       })
     } else {
-      // Reject the cancellation request — bid stays active
-      const updated = await db.bid.update({
-        where: { id },
+      // Reject the cancellation request — bid stays active. Claim it first, for
+      // the same reason as the approve path.
+      const claimed = await db.bid.updateMany({
+        where: { id, cancelStatus: 'PENDING' },
         data: {
           cancelStatus: 'REJECTED',
           cancelDecidedAt: new Date(),
           cancelAdminNote: adminNote ? String(adminNote).slice(0, 500) : null,
         },
       })
+      if (claimed.count === 0) {
+        return NextResponse.json({ error: 'Bid cancellation was already decided' }, { status: 409 })
+      }
+      const updated = await db.bid.findUnique({ where: { id } })
 
       // Log rejection (under the bidder's activity)
       await logActivity({
@@ -160,6 +171,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   } catch (e: any) {
     if (e.message === 'FORBIDDEN' || e.message === 'UNAUTHORIZED') {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+    // Lost the race against a parallel decision on the same bid.
+    if (e.message === 'BID_ALREADY_DECIDED') {
+      return NextResponse.json({ error: 'Bid cancellation was already decided' }, { status: 409 })
     }
     return NextResponse.json({ error: safeClientMessage(e, 'Failed to process cancellation') }, { status: 500 })
   }

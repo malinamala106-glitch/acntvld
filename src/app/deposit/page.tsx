@@ -2,6 +2,7 @@ import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { redirect } from 'next/navigation'
 import { DepositPage } from '@/components/public/DepositPage'
+import { toUserProps, toWalletProps } from '@/lib/props'
 import type { Metadata } from 'next'
 
 export const dynamic = 'force-dynamic'
@@ -43,8 +44,8 @@ export default async function Page() {
 
   return (
     <DepositPage
-      user={user}
-      wallets={wallets}
+      user={toUserProps(user)}
+      wallets={wallets.map(toWalletProps)}
       minDeposit={parseFloat(settingsMap.minDepositAmount ?? '0') || 0}
       siteName={settingsMap.siteName ?? 'DigitalVault'}
       usdtAddresses={{
