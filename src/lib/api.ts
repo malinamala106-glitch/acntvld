@@ -144,6 +144,27 @@ export const api = {
     await fetch(`/api/products/${id}`, { method: 'DELETE' })
   },
 
+  // Persist the admin's drag-and-drop ordering. `ids` must be EVERY product,
+  // in display order — the server replaces the whole ordering in one
+  // transaction and rejects a partial list.
+  async reorderProducts(ids: string[]): Promise<void> {
+    const res = await fetch('/api/admin/products/order', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order: ids }),
+    })
+    await json<{ ok: boolean; changed: boolean }>(res)
+  },
+
+  async pinProduct(id: string, pinned: boolean): Promise<void> {
+    const res = await fetch('/api/admin/products/pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, pinned }),
+    })
+    await json<{ ok: boolean }>(res)
+  },
+
   async listKeys(productId: string): Promise<LicenseKey[]> {
     const res = await fetch(`/api/products/${productId}/keys`)
     const data = await json<{ keys: LicenseKey[] }>(res)

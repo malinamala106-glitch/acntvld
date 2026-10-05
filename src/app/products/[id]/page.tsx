@@ -12,7 +12,8 @@ export const dynamic = 'force-dynamic'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
-  const product = await db.product.findUnique({ where: { id } })
+  // A missing database must produce a 404 page, not a 500.
+  const product = await db.product.findUnique({ where: { id } }).catch(() => null)
   if (!product || !product.isActive) return { title: 'Product not found' }
   return {
     title: product.name,
@@ -23,21 +24,26 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const product = await db.product.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      renderHtml: true,
-      category: true,
-      price: true,
-      stock: true,
-      image: true,
-      isActive: true,
-      createdAt: true,
-    },
-  })
+  const product = await db.product
+    .findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        renderHtml: true,
+        category: true,
+        price: true,
+        stock: true,
+        image: true,
+        isActive: true,
+        createdAt: true,
+      },
+    })
+    .catch((error) => {
+      console.error('[products] product read failed — rendering 404', error)
+      return null
+    })
   if (!product || !product.isActive) notFound()
 
   // Product structured data — lets Google show price/availability rich results.

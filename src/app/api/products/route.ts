@@ -13,7 +13,9 @@ export async function GET(req: NextRequest) {
     try {
       await requireAdmin()
       const products = await db.product.findMany({
-        orderBy: { createdAt: 'desc' },
+        // Same ordering the storefront uses, so the admin grid is a WYSIWYG
+        // preview of what buyers see.
+        orderBy: [{ pinned: 'desc' }, { sortOrder: 'asc' }, { createdAt: 'desc' }],
         include: { _count: { select: { keys: { where: { status: 'AVAILABLE' } } } } },
       })
       return NextResponse.json({ products })
@@ -25,7 +27,11 @@ export async function GET(req: NextRequest) {
   const where = user?.role === 'ADMIN' ? {} : { isActive: true }
   const products = await db.product.findMany({
     where,
-    orderBy: { createdAt: 'desc' },
+    // Pinned first, then the admin's manual order, then newest-first as a
+    // tiebreaker. Keep in sync with getCachedActiveProducts in lib/cache.ts —
+    // the storefront server-renders from that cache and then refetches here,
+    // so a mismatch would make products visibly swap position on load.
+    orderBy: [{ pinned: 'desc' }, { sortOrder: 'asc' }, { createdAt: 'desc' }],
     select: {
       id: true,
       name: true,
@@ -38,6 +44,8 @@ export async function GET(req: NextRequest) {
       stock: true,
       image: true,
       isActive: true,
+      pinned: true,
+      sortOrder: true,
       createdAt: true,
     },
   })
@@ -139,9 +147,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // New products go to the top of the storefront, as they always did.
+    // Taking `min - 1` instead of the schema default of 0 keeps the new row's
+    // sortOrder unique, so it doesn't tie with whatever is already first and
+    // fall back to the createdAt tiebreaker.
+    const lowest = await db.product.aggregate({ _min: { sortOrder: true } })
+    const topSortOrder = (lowest._min.sortOrder ?? 0) - 1
+
     const product = await db.product.create({
       data: {
         name: nameClean,
+        sortOrder: topSortOrder,
         description: typeof description === 'string' ? description.slice(0, 20000) : null,
         renderHtml: typeof renderHtml === 'boolean' ? renderHtml : false,
         category: category || 'General',

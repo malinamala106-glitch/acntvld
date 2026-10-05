@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
 import { ChatWidgetLazy } from '@/components/shared/ChatWidgetLazy'
 import { TrackingScripts } from '@/components/TrackingScripts'
+import { GoogleTagManager } from '@/components/GoogleTagManager'
 import { jsonLdHtml } from '@/lib/json-ld'
 import { serverSiteUrl } from '@/lib/site-url'
 
@@ -17,6 +18,27 @@ const geistMono = Geist_Mono({
   subsets: ['latin'],
   display: 'swap',
 })
+
+/**
+ * Every route renders per request.
+ *
+ * Two reasons, both about deploys:
+ *
+ * 1. Prerendering used to make `next build` query the database for the pages
+ *    it generated at build time (about, contact, terms, privacy, the blog
+ *    list). A deploy with no DATABASE_URL — or one whose URL doesn't match the
+ *    Prisma datasource — failed the whole build (`Failed to collect page data`)
+ *    instead of coming up. The database is a RUN time dependency, never a
+ *    build-time one.
+ * 2. Anything baked in at build time is stale the moment the operator adds the
+ *    database, or an admin edits site copy, with no redeploy to refresh it.
+ *
+ * Declaring it on the root layout covers every page in one place, including
+ * pages that don't read the database themselves. Cheap reads stay cached
+ * through the tag cache in @/lib/cache, so this is not a per-request-cost
+ * decision — it only moves WHERE the render happens.
+ */
+export const dynamic = 'force-dynamic'
 
 const baseUrl = serverSiteUrl()
 const siteName = 'DigitalVault'
@@ -161,6 +183,8 @@ export default function RootLayout({
       <head>
         {/* Tracking scripts injected into <head> (GTM, GA4, Meta Pixel, etc.) */}
         <TrackingScripts position="head" />
+        {/* GTM loader from NEXT_PUBLIC_GTM_ID (deployment-time container) */}
+        <GoogleTagManager position="head" />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
@@ -168,6 +192,8 @@ export default function RootLayout({
         {children}
         {/* Tracking scripts injected before </body> (noscript tags, etc.) */}
         <TrackingScripts position="body" />
+        {/* GTM <noscript> iframe — only valid at the start of <body> */}
+        <GoogleTagManager position="body" />
         {/* Floating chat support widget — client-only, lazy-loaded after hydration */}
         <ChatWidgetLazy />
         <script

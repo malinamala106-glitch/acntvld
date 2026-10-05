@@ -14,7 +14,8 @@ export const revalidate = 300
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params
-  const post = await db.blogPost.findUnique({ where: { slug } })
+  // A missing database must produce a 404 page, not a 500.
+  const post = await db.blogPost.findUnique({ where: { slug } }).catch(() => null)
   if (!post || !post.isPublished) return { title: 'Post not found' }
   return {
     title: post.title,
@@ -25,7 +26,10 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
 export default async function Page({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
-  const post = await db.blogPost.findUnique({ where: { slug } })
+  const post = await db.blogPost.findUnique({ where: { slug } }).catch((error) => {
+    console.error('[blogs] post read failed — rendering 404', error)
+    return null
+  })
   if (!post || !post.isPublished) notFound()
 
   // Site name + footer copy for the shared footer (tag-cached).

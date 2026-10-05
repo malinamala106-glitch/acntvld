@@ -57,6 +57,10 @@ type ProductRow = {
   stock: number
   image: string | null
   isActive: boolean
+  // Manual storefront order (see lib/types.ts). Optional because the sitemap
+  // and a few admin reads project a subset of columns.
+  sortOrder?: number
+  pinned?: boolean
   createdAt?: Date | string
   fromPrice?: number
   maxPrice?: number

@@ -57,7 +57,7 @@ export interface TrackingSettings {
 
 // Cached fetcher — revalidated every 60 seconds or on tag 'tracking' invalidation.
 // Called from the TrackingScripts server component (no admin required — public read).
-export const getTrackingSettings = unstable_cache(
+const cachedTrackingSettings = unstable_cache(
   async (): Promise<TrackingSettings> => {
     const rows = await db.setting.findMany({
       where: {
@@ -85,6 +85,28 @@ export const getTrackingSettings = unstable_cache(
   ['tracking-settings'],
   { tags: ['tracking'], revalidate: 60 }
 )
+
+/**
+ * Tracking config for the public layout.
+ *
+ * TrackingScripts renders inside the ROOT LAYOUT, so this read runs on every
+ * single page: an unreachable database here takes the whole site down rather
+ * than one page. It therefore degrades to "everything off" — the site keeps
+ * serving, and the safe direction for an injection feature is to inject
+ * nothing.
+ *
+ * The catch sits OUTSIDE unstable_cache so a failure is never stored in the
+ * data cache; the next request retries the database instead of replaying an
+ * empty result for the rest of the TTL.
+ */
+export async function getTrackingSettings(): Promise<TrackingSettings> {
+  try {
+    return await cachedTrackingSettings()
+  } catch (error) {
+    console.error('[tracking] settings read failed — rendering without tracking scripts', error)
+    return { enabled: false, prodOnly: false, headScripts: '', bodyScripts: '' }
+  }
+}
 
 /** Whether pure-inline (no whitelisted src) snippets may be stored. Read per-request by the admin route. */
 export async function getTrackingAllowInline(): Promise<boolean> {

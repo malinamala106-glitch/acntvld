@@ -10,9 +10,9 @@
  * Resolution order (server):
  *   1. SITE_URL               — explicit override, never baked into the client bundle
  *   2. NEXT_PUBLIC_SITE_URL   — inlined into the browser bundle at build time
- *   3. VERCEL_URL             — set automatically by Vercel on every deployment,
- *                               so a forgotten env var degrades to the real
- *                               deployment host instead of localhost
+ *   3. a platform-injected deployment URL — Vercel sets VERCEL_URL, Netlify sets
+ *      DEPLOY_PRIME_URL / URL — so a forgotten env var degrades to the real
+ *      deployment host instead of localhost
  *   4. the caller's fallback
  *
  * Only NEXT_PUBLIC_* survives into the client bundle, so browser code must use
@@ -21,6 +21,35 @@
 
 /** Used only when nothing at all is configured, i.e. a developer laptop. */
 const DEV_ORIGIN = 'http://localhost:3000'
+
+/**
+ * The host the platform injects for the current deployment, if any.
+ *
+ * Every host is read because each platform sets a different one: Vercel sets
+ * VERCEL_URL; Netlify sets DEPLOY_PRIME_URL (and URL on the main site); Render
+ * sets RENDER_EXTERNAL_URL on web services. Reading only one host meant that
+ * deploying to another platform lost the safety net entirely and every
+ * generated link silently became http://localhost:3000.
+ * DEPLOY_PRIME_URL is preferred because on Netlify it tracks previews too.
+ *
+ * The `||` chain is deliberate and NOT interchangeable with `??`: a host var
+ * that is set-but-blank (an operator leaving the field empty, or a CI system
+ * exporting an empty string) must fall through to the next candidate. `??`
+ * only skips null/undefined, so a blank DEPLOY_PRIME_URL would shadow a valid
+ * VERCEL_URL and silently disable the fallback.
+ */
+function platformOrigin(): string | null {
+  const injected =
+    process.env.DEPLOY_PRIME_URL ||
+    process.env.VERCEL_URL ||
+    // Render's own service URL — present without any configuration, so a
+    // deploy on Render never advertises localhost in canonicals, og:url,
+    // sitemap.xml or the Google OAuth redirect_uri.
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.URL
+  if (!injected) return null
+  return toOrigin(injected.startsWith('http') ? injected : `https://${injected}`)
+}
 
 let warned = false
 
@@ -46,7 +75,7 @@ export function configuredSiteUrl(): string | null {
   return (
     toOrigin(process.env.SITE_URL) ??
     toOrigin(process.env.NEXT_PUBLIC_SITE_URL) ??
-    (process.env.VERCEL_URL ? toOrigin(`https://${process.env.VERCEL_URL}`) : null)
+    platformOrigin()
   )
 }
 

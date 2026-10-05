@@ -165,6 +165,13 @@ function applySecurityHeaders(res: NextResponse, isDev: boolean): NextResponse {
   return res
 }
 
+/** First value of a comma-separated proxy header (e.g. "https, http"), or null. */
+function firstHeader(value: string | null): string | null {
+  if (!value) return null
+  const first = value.split(',')[0].trim().toLowerCase()
+  return first || null
+}
+
 export function proxy(req: NextRequest) {
   const isDev = process.env.NODE_ENV !== 'production'
 
@@ -175,10 +182,26 @@ export function proxy(req: NextRequest) {
     // every real visitor off the deployed domain onto their own machine.
     const configured = configuredSiteUrl()
     if (configured) {
-      const canonicalOrigin = configured
-      if (req.nextUrl.origin !== canonicalOrigin) {
+      const canonical = new URL(configured)
+      // Compare the host/protocol the REQUEST actually carries, taken from the
+      // hosting proxy's headers, instead of `req.nextUrl.origin`.
+      //
+      // Behind a reverse proxy (Render, Netlify, Vercel, Cloudflare) the origin
+      // Next derives for nextUrl is a guess built from the Host header plus
+      // whatever protocol it infers. When that guess disagrees with the
+      // canonical origin — e.g. Next sees plain http because the proxy
+      // terminates TLS — EVERY request is 308'd to the canonical origin and a
+      // browser looping on https://host → 308 https://host → … never reaches
+      // the app. x-forwarded-host / x-forwarded-proto are set by the proxy on
+      // the request, so they describe the visitor's real request.
+      const host = firstHeader(req.headers.get('x-forwarded-host')) || req.headers.get('host') || req.nextUrl.host
+      const protocol = firstHeader(req.headers.get('x-forwarded-proto')) || req.nextUrl.protocol.replace(':', '')
+      const wrongHost = host.toLowerCase() !== canonical.host.toLowerCase()
+      const wrongProtocol = protocol !== canonical.protocol.replace(':', '')
+
+      if (wrongHost || wrongProtocol) {
         return applySecurityHeaders(
-          NextResponse.redirect(new URL(req.nextUrl.pathname + req.nextUrl.search, canonicalOrigin), 308),
+          NextResponse.redirect(new URL(req.nextUrl.pathname + req.nextUrl.search, canonical), 308),
           isDev
         )
       }

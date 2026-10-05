@@ -5,8 +5,17 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// PostgreSQL in every environment — production runs on Supabase, and dev
+// points at the same engine so a schema that works locally cannot break on
+// deploy. (This was `sqlite` until the move to Supabase; a sqlite schema and a
+// postgres DATABASE_URL is exactly what made the first deploys fail with
+// "the URL must start with the protocol `file:`".)
+//
+// DATABASE_URL must be a full postgres:// connection string — use Supabase's
+// *Session pooler* URI (host `...pooler.supabase.com`, port 5432), which is
+// reachable over IPv4. `prisma db push` and the app both use this one variable.
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -56,6 +65,11 @@ model Product {
   stock           Int      @default(0) // denormalized count of available keys
   image           String?  // emoji or url
   isActive        Boolean  @default(true)
+  // Manual storefront order. Lower = higher in the list. `pinned` floats a
+  // product above every unpinned one regardless of its sortOrder. Backfilled
+  // from createdAt so the listing is unchanged until an admin reorders it.
+  sortOrder       Int      @default(0)
+  pinned          Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -65,6 +79,7 @@ model Product {
 
   @@index([isActive, createdAt])   // storefront listing: active products, newest first
   @@index([category])              // storefront category filter
+  @@index([pinned, sortOrder])     // admin + storefront manual ordering
 }
 
 // Date-based pricing batches.

@@ -31,7 +31,11 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
+# `.env*` would also swallow `.env.example`, which must stay tracked: it is the
+# only place the full variable list, its meaning and its format are documented.
+# It holds placeholders only, never a real secret.
 .env*
+!.env.example
 
 # vercel
 .vercel

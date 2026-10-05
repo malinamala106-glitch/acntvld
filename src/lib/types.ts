@@ -29,6 +29,10 @@ export interface Product {
   stock: number
   image: string | null
   isActive: boolean
+  // Manual storefront order: lower sortOrder = higher in the list. `pinned`
+  // floats a product above every unpinned one regardless of sortOrder.
+  sortOrder?: number
+  pinned?: boolean
   createdAt?: string
   // Batch pricing — populated by the product list endpoint for the public
   // storefront. `hasBatchPricing` is true only when the product has more

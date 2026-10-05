@@ -99,10 +99,17 @@ export function rateLimit({ scope, identifier, limit, windowMs }: RateLimitOptio
  *
  * What is trusted now, in order:
  *   1. Headers a reverse proxy / platform *overwrites* (rather than appends):
- *      Cloudflare `cf-connecting-ip`, Fly.io `fly-client-ip`, Vercel/most proxies
- *      `x-real-ip`. Plain `x-forwarded-for` is deliberately ignored.
+ *      Cloudflare `cf-connecting-ip`, Fly.io `fly-client-ip`, Netlify
+ *      `x-nf-client-connection-ip`, Vercel/most proxies `x-real-ip`. Plain
+ *      `x-forwarded-for` is deliberately ignored.
  *   2. The socket's own remote address, where the runtime exposes it.
  *   3. `unknown` — one shared bucket. That errs strict, never loose.
+ *
+ * Netlify note: `x-nf-client-connection-ip` is set and overwritten by the
+ * platform on every request. Without it in this list, NONE of the headers above
+ * were present on Netlify, so `req.socket.remoteAddress` was a function
+ * instance's own address — meaning every visitor shared a single bucket and the
+ * 30/15min login limit locked out the entire site rather than one attacker.
  *
  * Deployment note: whatever fronts this app must overwrite the headers above.
  * With no proxy, every visitor shares the `unknown` bucket and legit traffic
@@ -113,6 +120,7 @@ export function clientIp(req: Request, fallback = 'unknown'): string {
   const trusted =
     req.headers.get('cf-connecting-ip') ??
     req.headers.get('fly-client-ip') ??
+    req.headers.get('x-nf-client-connection-ip') ??
     req.headers.get('x-real-ip') ??
     req.headers.get('x-vercel-forwarded-for')
   if (trusted) {

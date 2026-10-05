@@ -26,13 +26,14 @@ import { ImageUploader } from '@/components/admin/ImageUploader'
 import { EntriesModal } from '@/components/admin/EntriesModal'
 import { UserProfileModal } from '@/components/admin/UserProfileModal'
 import { SupportConsoleView } from '@/components/admin/SupportConsoleView'
+import { ProductOrderList, useProductOrder, useSortableRow } from '@/components/admin/ProductOrderList'
 import { formatMoney, formatDate, shortId, statusBadgeClass } from '@/lib/format'
 import { toast } from 'sonner'
 import {
   Wallet, Package, Bitcoin, LogOut, Loader2, Plus, Trash2, Pencil, Key, CheckCircle2, XCircle, Clock,
   TrendingUp, Users, ShoppingBag, AlertCircle, Copy, Search, FileText, Settings, ArrowUpCircle, ArrowDownCircle,
   Gavel, Tag, Link2, Upload, ChevronLeft, ChevronRight, MoreHorizontal, Download, MessageCircle, Type, Newspaper,
-  GripVertical, ChevronUp, ChevronDown, Eye, EyeOff, UserPlus,
+  GripVertical, ChevronUp, ChevronDown, Eye, EyeOff, UserPlus, Pin, PinOff,
 } from 'lucide-react'
 
 interface Props {
@@ -434,6 +435,37 @@ function StatCard({ icon, label, value, accent }: { icon: React.ReactNode; label
 function ProductsView({ products, loading, onRefresh }: { products: Product[]; loading: boolean; onRefresh: () => void }) {
   const [search, setSearch] = useState('')
   const filtered = products.filter((p) => !search || p.name.toLowerCase().includes(search.toLowerCase()))
+  const searching = search.trim().length > 0
+
+  /**
+   * Persist a new ordering. The server assigns sortOrder by array index, so it
+   * must receive EVERY product id in the new order. That is exactly why the
+   * reorder UI is disabled while searching — a filtered subset would renumber
+   * the whole catalog around the rows the admin can’t see.
+   */
+  async function saveOrder(orderedIds: string[]) {
+    try {
+      await api.reorderProducts(orderedIds)
+      toast.success('Order saved')
+    } catch (e: any) {
+      toast.error(e.message || 'Could not save the new order')
+      // Server order is authoritative — pull it back so the card snaps to the
+      // order the buyer is actually seeing.
+      onRefresh()
+    }
+  }
+
+  async function savePin(id: string, pinned: boolean) {
+    try {
+      await api.pinProduct(id, pinned)
+      toast.success(pinned ? 'Pinned to top of the storefront' : 'Unpinned')
+      onRefresh()
+    } catch (e: any) {
+      toast.error(e.message || 'Could not update pin')
+      // Rethrow so the list rolls its optimistic change back.
+      throw e
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -449,6 +481,13 @@ function ProductsView({ products, loading, onRefresh }: { products: Product[]; l
         <Input placeholder="Search products..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
       </div>
 
+      {searching && (
+        <p className="text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-md px-3 py-2">
+          Searching — clear the box to reorder or pin. Reordering a filtered list
+          would renumber the products you can’t see.
+        </p>
+      )}
+
       {loading && products.length === 0 ? (
         <div className="text-center py-12"><Loader2 className="w-6 h-6 mx-auto animate-spin text-zinc-400" /></div>
       ) : filtered.length === 0 ? (
@@ -458,12 +497,22 @@ function ProductsView({ products, loading, onRefresh }: { products: Product[]; l
             <p>No products yet. Click &quot;New product&quot; to create one.</p>
           </CardContent>
         </Card>
-      ) : (
+      ) : searching ? (
+        // Ordering is off while filtering — see saveOrder() above.
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((p) => (
             <AdminProductCard key={p.id} product={p} onRefresh={onRefresh} />
           ))}
         </div>
+      ) : (
+        <ProductOrderList
+          products={filtered}
+          onReorder={saveOrder}
+          onPin={savePin}
+          onPinSuccess={onRefresh}
+        >
+          {(p) => <ProductOrderCard key={p.id} product={p} onRefresh={onRefresh} />}
+        </ProductOrderList>
       )}
     </div>
   )
@@ -650,7 +699,93 @@ function CreateProductDialog({ onCreated }: { onCreated: () => void }) {
   )
 }
 
-function AdminProductCard({ product, onRefresh }: { product: Product; onRefresh: () => void }) {
+/**
+ * Ordering chrome for one product row: drag handle, pin toggle and the
+ * ↑/↓ arrows that replace dragging on touch screens.
+ *
+ * Separate from AdminProductCard because it is only mounted inside
+ * <ProductOrderList> — useSortable() throws outside a DndContext, and the same
+ * card is also rendered plain while the search box is active.
+ */
+function ProductOrderCard({ product, onRefresh }: { product: Product; onRefresh: () => void }) {
+  const { setNodeRef, style, dragHandleProps, isDragging } = useSortableRow(product.id)
+  const { pinBusyId, togglePin, moveBy, canMoveUp, canMoveDown } = useProductOrder()
+  const pinned = !!product.pinned
+  const pinBusy = pinBusyId === product.id
+
+  const chrome = (
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        {...dragHandleProps}
+        aria-label={`Reorder ${product.name}`}
+        title="Drag to reorder"
+        className="rounded p-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 cursor-grab active:cursor-grabbing touch-none select-none"
+      >
+        <span aria-hidden="true">⠿</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => togglePin(product.id)}
+        disabled={pinBusy}
+        aria-pressed={pinned}
+        aria-label={pinned ? `Unpin ${product.name}` : `Pin ${product.name} to top`}
+        title={pinned ? 'Unpin — returns to its manual position' : 'Pin to top of the storefront'}
+        className={
+          'rounded p-1 transition-colors disabled:opacity-50 ' +
+          (pinned
+            ? 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40'
+            : 'text-zinc-400 hover:text-emerald-600 dark:hover:text-emerald-400')
+        }
+      >
+        {pinned ? <Pin className="w-4 h-4 fill-current" /> : <PinOff className="w-4 h-4" />}
+      </button>
+      <div className="flex flex-col">
+        <button
+          type="button"
+          onClick={() => moveBy(product.id, -1)}
+          disabled={!canMoveUp(product.id)}
+          aria-label={`Move ${product.name} up`}
+          className="rounded text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 disabled:opacity-30 disabled:hover:text-zinc-400"
+        >
+          <ChevronUp className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => moveBy(product.id, 1)}
+          disabled={!canMoveDown(product.id)}
+          aria-label={`Move ${product.name} down`}
+          className="rounded text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+        >
+          <ChevronDown className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  )
+
+  return (
+    <div ref={setNodeRef} style={style} className={isDragging ? 'opacity-80' : undefined}>
+      <AdminProductCard
+        product={product}
+        onRefresh={onRefresh}
+        pinned={pinned}
+        orderChrome={chrome}
+      />
+    </div>
+  )
+}
+
+function AdminProductCard({
+  product,
+  onRefresh,
+  pinned,
+  orderChrome,
+}: {
+  product: Product
+  onRefresh: () => void
+  pinned?: boolean
+  orderChrome?: React.ReactNode
+}) {
   const [editOpen, setEditOpen] = useState(false)
   const [keysOpen, setKeysOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -706,8 +841,8 @@ function AdminProductCard({ product, onRefresh }: { product: Product; onRefresh:
   }
 
   return (
-    <Card>
-      <div className="aspect-video bg-gradient-to-br from-emerald-100 to-teal-50 dark:from-emerald-950/40 dark:to-zinc-900 flex items-center justify-center text-5xl rounded-t-lg overflow-hidden">
+    <Card className={pinned ? 'ring-2 ring-emerald-500 dark:ring-emerald-400' : undefined}>
+      <div className="aspect-video bg-gradient-to-br from-emerald-100 to-teal-50 dark:from-emerald-950/40 dark:to-zinc-900 flex items-center justify-center text-5xl rounded-t-lg overflow-hidden relative">
         {product.image ? (
           (product.image.startsWith('http://') || product.image.startsWith('https://') || product.image.startsWith('/')) ? (
             <Image
@@ -736,10 +871,20 @@ function AdminProductCard({ product, onRefresh }: { product: Product; onRefresh:
             <CardTitle className="text-base">{product.name}</CardTitle>
             <CardDescription className="text-xs">{product.category}</CardDescription>
           </div>
-          <Badge variant="outline" className={product.isActive ? 'border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-400' : 'border-zinc-300 text-zinc-500'}>
-            {product.isActive ? 'Active' : 'Hidden'}
-          </Badge>
+          <div className="flex items-center gap-1.5">
+            {pinned && (
+              <Badge variant="outline" className="border-emerald-400 text-emerald-700 dark:border-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40">
+                Pinned
+              </Badge>
+            )}
+            <Badge variant="outline" className={product.isActive ? 'border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-400' : 'border-zinc-300 text-zinc-500'}>
+              {product.isActive ? 'Active' : 'Hidden'}
+            </Badge>
+          </div>
         </div>
+        {orderChrome && (
+          <div className="flex items-center justify-end gap-2 -mt-1">{orderChrome}</div>
+        )}
       </CardHeader>
       <CardContent className="pb-2">
         <div className="flex items-baseline gap-2">
